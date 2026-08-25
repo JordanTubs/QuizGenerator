@@ -8,6 +8,7 @@ const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const GEMINI_PLACEHOLDER = "your_actual_api_key_here";
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
@@ -16,7 +17,7 @@ app.use(express.static("public"));
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-  fileSize: 20 * 1024 * 1024
+    fileSize: 20 * 1024 * 1024
   },
   fileFilter: (_req, file, cb) => {
     const isPdf =
@@ -29,6 +30,14 @@ const upload = multer({
     cb(null, true);
   }
 });
+
+function hasGeminiKey() {
+  return Boolean(
+    process.env.GEMINI_API_KEY &&
+      process.env.GEMINI_API_KEY.trim() &&
+      process.env.GEMINI_API_KEY.trim() !== GEMINI_PLACEHOLDER
+  );
+}
 
 function parseQuestionCount(value) {
   const parsed = Number.parseInt(value, 10);
@@ -121,14 +130,123 @@ ${documentText}
 `.trim();
 }
 
-app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
-  try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({
-        error: "Server configuration error: GEMINI_API_KEY is missing."
-      });
+function splitSentences(text) {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 80 && sentence.length <= 500);
+}
+
+function getKeywords(text) {
+  const stopWords = new Set([
+    "about",
+    "after",
+    "again",
+    "also",
+    "because",
+    "before",
+    "between",
+    "during",
+    "from",
+    "have",
+    "into",
+    "more",
+    "most",
+    "other",
+    "such",
+    "than",
+    "that",
+    "their",
+    "then",
+    "there",
+    "these",
+    "this",
+    "through",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "within",
+    "without"
+  ]);
+  const counts = new Map();
+  const words = text.toLowerCase().match(/\b[a-z][a-z-]{4,}\b/g) || [];
+
+  words.forEach((word) => {
+    if (!stopWords.has(word)) {
+      counts.set(word, (counts.get(word) || 0) + 1);
+    }
+  });
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([word]) => word)
+    .slice(0, 200);
+}
+
+function titleCase(value) {
+  return value
+    .split(/[-\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function makeFallbackQuiz(documentText, numQuestions) {
+  const sentences = splitSentences(documentText);
+  const keywords = getKeywords(documentText);
+  const candidates = sentences
+    .map((sentence) => {
+      const matchedKeyword = keywords.find((keyword) =>
+        new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(
+          sentence
+        )
+      );
+      return { sentence, keyword: matchedKeyword };
+    })
+    .filter((item) => item.keyword);
+
+  const source = candidates.length ? candidates : sentences.map((sentence) => ({
+    sentence,
+    keyword: keywords[0] || "concept"
+  }));
+
+  if (!source.length) {
+    throw new Error("No readable study content could be turned into quiz questions.");
+  }
+
+  return Array.from({ length: Math.min(numQuestions, source.length) }, (_unused, index) => {
+    const item = source[index % source.length];
+    const correct = titleCase(item.keyword);
+    const distractors = keywords
+      .filter((keyword) => keyword !== item.keyword)
+      .slice(index * 3, index * 3 + 12)
+      .map(titleCase);
+    const options = [correct, ...distractors].slice(0, 4);
+
+    while (options.length < 4) {
+      options.push(`Related Concept ${options.length}`);
     }
 
+    const answer = index % 4;
+    const shuffledOptions = [...options];
+    const correctOption = shuffledOptions[0];
+    shuffledOptions.splice(0, 1);
+    shuffledOptions.splice(answer, 0, correctOption);
+
+    return {
+      q: `Based on the uploaded PDF, which concept is most directly supported by this statement?\n\n"${item.sentence}"`,
+      options: shuffledOptions,
+      answer,
+      explanation: `The PDF statement most directly supports ${correct}. Review this sentence in context and connect it with the surrounding topic. The other choices are terms found or inferred from the document, but they are less directly supported by this specific statement.`
+    };
+  });
+}
+
+app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
+  try {
     if (!req.file) {
       return res.status(400).json({
         error: "Please upload a PDF file."
@@ -142,6 +260,13 @@ app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
     if (!documentText) {
       return res.status(422).json({
         error: "No readable text could be extracted from the PDF."
+      });
+    }
+
+    if (!hasGeminiKey()) {
+      return res.json({
+        questions: makeFallbackQuiz(documentText, numQuestions),
+        source: "fallback"
       });
     }
 
@@ -160,7 +285,8 @@ app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
     const questions = validateQuizPayload(extractJsonArray(response.text));
 
     return res.json({
-      questions: questions.slice(0, numQuestions)
+      questions: questions.slice(0, numQuestions),
+      source: "gemini"
     });
   } catch (error) {
     console.error(error);
@@ -169,6 +295,23 @@ app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
       return res.status(400).json({
         error: error.message
       });
+    }
+
+    try {
+      if (req.file) {
+        const numQuestions = parseQuestionCount(req.body.numQuestions);
+        const parsedPdf = await pdfParse(req.file.buffer);
+        const documentText = (parsedPdf.text || "").replace(/\s+/g, " ").trim();
+
+        if (documentText) {
+          return res.json({
+            questions: makeFallbackQuiz(documentText, numQuestions),
+            source: "fallback"
+          });
+        }
+      }
+    } catch (fallbackError) {
+      console.error(fallbackError);
     }
 
     return res.status(500).json({

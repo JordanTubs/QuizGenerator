@@ -117,7 +117,7 @@ function setLoading(isLoading) {
   generateButton.disabled = isLoading;
   generateButton.classList.toggle("is-loading", isLoading);
   statusMessage.textContent = isLoading
-    ? "Reading the PDF and building clinical vignettes..."
+    ? "Reading the PDF and building your quiz..."
     : "";
 }
 
@@ -247,7 +247,7 @@ async function generateQuiz(event) {
     showView("quiz");
     renderQuestion();
   } catch (error) {
-    statusMessage.textContent = error.message;
+    statusMessage.textContent = `${error.message} Try a text-based PDF or a smaller file.`;
   } finally {
     setLoading(false);
   }
@@ -271,8 +271,8 @@ function resetQuiz() {
   quizForm.reset();
   selectedPdfFile = null;
   userAnswers = [];
-  fileName.textContent = "or choose a file to upload";
-  statusMessage.textContent = "";
+  fileName.textContent = "or click this box to choose a PDF";
+  statusMessage.textContent = "Upload a reviewer PDF and the site will build a quiz from it.";
   progressBar.style.width = "0%";
   motivationMessage.textContent = "";
   mistakesReview.innerHTML = "";
