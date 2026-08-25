@@ -32,11 +32,8 @@ const upload = multer({
 });
 
 function hasGeminiKey() {
-  return Boolean(
-    process.env.GEMINI_API_KEY &&
-      process.env.GEMINI_API_KEY.trim() &&
-      process.env.GEMINI_API_KEY.trim() !== GEMINI_PLACEHOLDER
-  );
+  const key = process.env.GEMINI_API_KEY?.trim() || "";
+  return key.startsWith("AIza") && key.length > 20 && key !== GEMINI_PLACEHOLDER;
 }
 
 function parseQuestionCount(value) {
