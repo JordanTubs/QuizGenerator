@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>USMLE Quiz Generator</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="upload-container" class="panel upload-panel">
+        <div class="brand-row">
+          <div class="brand-mark">+</div>
+          <div>
+            <p class="eyebrow">Clinical Knowledge Builder</p>
+            <h1>USMLE Quiz Generator</h1>
+          </div>
+        </div>
+
+        <form id="quiz-form" class="quiz-form">
+          <label id="dropzone" class="dropzone" for="pdf-input">
+            <input id="pdf-input" name="pdf" type="file" accept=".pdf,application/pdf" />
+            <span class="dropzone-icon">PDF</span>
+            <span class="dropzone-title">Drop your source PDF here</span>
+            <span id="file-name" class="dropzone-subtitle">or choose a file to upload</span>
+          </label>
+
+          <div class="field-row">
+            <label for="num-questions">
+              Number of questions
+              <input
+                id="num-questions"
+                name="numQuestions"
+                type="number"
+                min="1"
+                max="60"
+                value="10"
+                inputmode="numeric"
+              />
+            </label>
+            <button id="generate-button" type="submit">
+              <span class="button-text">Generate Quiz</span>
+              <span class="spinner" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <p id="status-message" class="status-message" role="status"></p>
+        </form>
+      </section>
+
+      <section id="quiz-container" class="panel quiz-panel hidden">
+        <header class="quiz-header">
+          <div>
+            <p id="question-counter" class="eyebrow">Question 1 of 10</p>
+            <h2>USMLE Practice Set</h2>
+          </div>
+          <div class="score-pill" id="score-display">Score: 0 / 0</div>
+        </header>
+
+        <div class="progress-track" aria-hidden="true">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+
+        <article class="question-card">
+          <p id="question-text" class="question-text"></p>
+          <div id="options-list" class="options-list"></div>
+        </article>
+
+        <aside id="explanation-card" class="explanation-card hidden">
+          <h3>Explanation</h3>
+          <p id="explanation-text"></p>
+        </aside>
+
+        <button id="next-button" class="next-button hidden" type="button">Next Question</button>
+      </section>
+
+      <section id="results-container" class="panel results-panel hidden">
+        <p class="eyebrow">Quiz Complete</p>
+        <h2 id="results-percentage">0%</h2>
+        <p id="results-fraction" class="results-fraction">0 / 0 correct</p>
+        <button id="restart-button" type="button">Generate New Quiz</button>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "usmle-quiz-generator",
+  "version": "1.0.0",
+  "description": "Interactive USMLE-style quiz generator from PDF uploads using Gemini.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.21.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
