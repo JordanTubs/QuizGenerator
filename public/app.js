@@ -24,6 +24,20 @@ let questions = [];
 let currentQuestionIndex = 0;
 let score = 0;
 let answeredCurrentQuestion = false;
+let selectedPdfFile = null;
+
+function isPdfFile(file) {
+  return Boolean(
+    file &&
+      (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))
+  );
+}
+
+function setSelectedFile(file) {
+  selectedPdfFile = file;
+  fileName.textContent = file?.name || "or choose a file to upload";
+  statusMessage.textContent = file ? "" : statusMessage.textContent;
+}
 
 function setLoading(isLoading) {
   generateButton.disabled = isLoading;
@@ -116,7 +130,7 @@ function showResults() {
 async function generateQuiz(event) {
   event.preventDefault();
 
-  const file = pdfInput.files[0];
+  const file = selectedPdfFile || pdfInput.files[0];
   const requestedCount = Number.parseInt(numQuestionsInput.value, 10);
   const count = Math.min(Math.max(Number.isNaN(requestedCount) ? 10 : requestedCount, 1), 60);
 
@@ -176,6 +190,7 @@ function resetQuiz() {
   score = 0;
   answeredCurrentQuestion = false;
   quizForm.reset();
+  selectedPdfFile = null;
   fileName.textContent = "or choose a file to upload";
   statusMessage.textContent = "";
   progressBar.style.width = "0%";
@@ -183,7 +198,27 @@ function resetQuiz() {
 }
 
 pdfInput.addEventListener("change", () => {
-  fileName.textContent = pdfInput.files[0]?.name || "or choose a file to upload";
+  const file = pdfInput.files[0];
+
+  if (!file) {
+    setSelectedFile(null);
+    return;
+  }
+
+  if (!isPdfFile(file)) {
+    setSelectedFile(null);
+    statusMessage.textContent = "Only PDF files are supported.";
+    pdfInput.value = "";
+    return;
+  }
+
+  setSelectedFile(file);
+});
+
+["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+  document.addEventListener(eventName, (event) => {
+    event.preventDefault();
+  });
 });
 
 ["dragenter", "dragover"].forEach((eventName) => {
@@ -207,16 +242,12 @@ dropzone.addEventListener("drop", (event) => {
     return;
   }
 
-  if (file.type !== "application/pdf") {
+  if (!isPdfFile(file)) {
     statusMessage.textContent = "Only PDF files are supported.";
     return;
   }
 
-  const dataTransfer = new DataTransfer();
-  dataTransfer.items.add(file);
-  pdfInput.files = dataTransfer.files;
-  fileName.textContent = file.name;
-  statusMessage.textContent = "";
+  setSelectedFile(file);
 });
 
 quizForm.addEventListener("submit", generateQuiz);
