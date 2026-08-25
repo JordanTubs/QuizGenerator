@@ -38,7 +38,7 @@ function isPdfFile(file) {
 
 function setSelectedFile(file) {
   selectedPdfFile = file;
-  fileName.textContent = file?.name || "or choose a file to upload";
+  fileName.textContent = file?.name || "Click to choose a file";
   statusMessage.textContent = file ? "" : statusMessage.textContent;
   dropzone.classList.toggle("has-file", Boolean(file));
 }
@@ -275,8 +275,8 @@ function resetQuiz() {
   quizForm.reset();
   selectedPdfFile = null;
   userAnswers = [];
-  fileName.textContent = "or click this box to choose a PDF";
-  statusMessage.textContent = "Upload a reviewer PDF and the site will build a quiz from it.";
+  fileName.textContent = "Click to choose a file";
+  statusMessage.textContent = "Ready for your PDF.";
   progressBar.style.width = "0%";
   motivationMessage.textContent = "";
   mistakesReview.innerHTML = "";

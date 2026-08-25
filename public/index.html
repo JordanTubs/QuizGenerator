@@ -9,11 +9,14 @@
   <body>
     <main class="app-shell">
       <section id="upload-container" class="panel upload-panel">
-        <div class="brand-row">
-          <div class="brand-mark">+</div>
+        <div class="brand-row upload-brand">
+          <div class="brand-mark" aria-hidden="true">+</div>
           <div>
-            <p class="eyebrow">Clinical Knowledge Builder</p>
+            <p class="eyebrow">PDF Reviewer</p>
             <h1>USMLE Quiz Generator</h1>
+            <p class="lead">
+              Upload your reviewer and turn it into an interactive practice set.
+            </p>
           </div>
         </div>
 
@@ -22,7 +25,7 @@
             <input id="pdf-input" name="pdf" type="file" accept=".pdf,application/pdf" />
             <span class="dropzone-icon">PDF</span>
             <span class="dropzone-title">Drag your PDF here</span>
-            <span id="file-name" class="dropzone-subtitle">or click this box to choose a PDF</span>
+            <span id="file-name" class="dropzone-subtitle">Click to choose a file</span>
           </label>
 
           <div class="field-row">
@@ -39,13 +42,13 @@
               />
             </label>
             <button id="generate-button" type="submit">
-              <span class="button-text">Generate Quiz</span>
+              <span class="button-text">Generate Review Quiz</span>
               <span class="spinner" aria-hidden="true"></span>
             </button>
           </div>
 
           <p id="status-message" class="status-message" role="status">
-            Upload a reviewer PDF and the site will build a quiz from it.
+            Ready for your PDF.
           </p>
         </form>
       </section>
@@ -54,7 +57,7 @@
         <header class="quiz-header">
           <div>
             <p id="question-counter" class="eyebrow">Question 1 of 10</p>
-            <h2>USMLE Practice Set</h2>
+            <h2>Practice Set</h2>
           </div>
           <div class="score-pill" id="score-display">Score: 0 / 0</div>
         </header>
