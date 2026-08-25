@@ -16,10 +16,14 @@ app.use(express.static("public"));
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 20 * 1024 * 1024
+  fileSize: 20 * 1024 * 1024
   },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype !== "application/pdf") {
+    const isPdf =
+      file.mimetype === "application/pdf" ||
+      file.originalname.toLowerCase().endsWith(".pdf");
+
+    if (!isPdf) {
       return cb(new Error("Only PDF files are supported."));
     }
     cb(null, true);
