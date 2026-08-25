@@ -244,6 +244,10 @@ async function generateQuiz(event) {
     currentQuestionIndex = 0;
     score = 0;
     userAnswers = Array(questions.length).fill(null);
+    if (payload.source === "fallback") {
+      statusMessage.textContent =
+        "Basic PDF mode was used. Add a valid Gemini API key in Render for smarter USMLE-style reasoning questions.";
+    }
     showView("quiz");
     renderQuestion();
   } catch (error) {

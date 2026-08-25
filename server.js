@@ -105,15 +105,25 @@ function validateQuizPayload(payload) {
 
 function buildPrompt(documentText, numQuestions) {
   return `
-You are an expert USMLE Step 1 question writer.
+You are an expert NBME/USMLE Step 1 question writer and medical educator.
 
-Generate exactly ${numQuestions} multiple-choice questions based only on the source material below.
+Read the uploaded source material carefully, identify its high-yield mechanisms and relationships, then generate exactly ${numQuestions} multiple-choice questions based only on that source material.
 
 Requirements:
-- Questions must be USMLE Step 1 style clinical vignettes that test mechanisms, physiology, pathology, pharmacology, microbiology, biochemistry, anatomy, or immunology when supported by the source.
+- Questions must feel like real USMLE Step 1/NBME items, not flashcards.
+- Use clinical vignettes, experimental setups, lab findings, physiologic changes, pathology descriptions, or mechanism-based prompts when supported by the PDF.
+- Test understanding and application: cause/effect, mechanism, next physiologic change, expected lab finding, pathway consequence, lesion localization, drug effect, or disease mechanism.
+- Do not ask questions that can be answered by matching one obvious keyword from the prompt to the answer choice.
+- Do not copy one sentence and ask "which concept is supported"; transform the PDF content into a reasoning question.
+- Do not make the correct answer longer, more specific, or more detailed than the distractors.
+- Distractors must be medically plausible and drawn from nearby or related concepts in the PDF whenever possible.
+- All four answer choices should be parallel in grammar, length, and category.
+- Avoid giveaway words such as "always", "never", "only", "all of the above", and "none of the above".
+- Avoid answer choices that are obviously unrelated to the vignette.
 - Each question must have exactly 4 answer choices.
 - The "answer" value must be the zero-based index of the correct option.
-- Explanations must include the detailed physiological rationale for the correct option and briefly explain why the other options are wrong.
+- Explanations must teach the underlying mechanism and clearly explain why the correct option is right and why each distractor is wrong.
+- If the PDF is about non-medical material, still write review-style application questions from the PDF, but do not invent facts outside the source.
 - Do not include markdown, commentary, code fences, or any keys other than q, options, answer, and explanation.
 - Return strict JSON only, matching this exact shape:
 [
@@ -130,12 +140,79 @@ ${documentText}
 `.trim();
 }
 
+function chunkText(text) {
+  const paragraphs = text
+    .split(/(?:\n|\r| {2,})+/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter((paragraph) => paragraph.length >= 160);
+  const chunks = [];
+
+  paragraphs.forEach((paragraph) => {
+    if (paragraph.length <= 900) {
+      chunks.push(paragraph);
+      return;
+    }
+
+    const sentences = splitSentences(paragraph);
+    let current = "";
+
+    sentences.forEach((sentence) => {
+      if (`${current} ${sentence}`.trim().length > 900 && current) {
+        chunks.push(current);
+        current = sentence;
+      } else {
+        current = `${current} ${sentence}`.trim();
+      }
+    });
+
+    if (current) {
+      chunks.push(current);
+    }
+  });
+
+  return chunks.length ? chunks : splitSentences(text);
+}
+
 function splitSentences(text) {
   return text
     .replace(/\s+/g, " ")
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length >= 80 && sentence.length <= 500);
+}
+
+function scoreSentence(sentence, keywords) {
+  const lower = sentence.toLowerCase();
+  const keywordHits = keywords.filter((keyword) => lower.includes(keyword)).length;
+  const mechanismHits = [
+    "increase",
+    "decrease",
+    "because",
+    "therefore",
+    "causes",
+    "leads",
+    "results",
+    "stimulates",
+    "inhibits",
+    "transport",
+    "membrane",
+    "receptor",
+    "gradient",
+    "pressure",
+    "concentration",
+    "potential",
+    "channel",
+    "pump",
+    "permeability"
+  ].filter((word) => lower.includes(word)).length;
+
+  return keywordHits * 2 + mechanismHits;
+}
+
+function getBestTerms(text, limit = 80) {
+  return getKeywords(text)
+    .filter((keyword) => keyword.length >= 5)
+    .slice(0, limit);
 }
 
 function getKeywords(text) {
@@ -186,6 +263,20 @@ function getKeywords(text) {
     .slice(0, 200);
 }
 
+function shuffleWithAnswer(options, correctAnswer, seed) {
+  const ordered = options.map((option, index) => ({ option, index }));
+
+  for (let i = ordered.length - 1; i > 0; i -= 1) {
+    const swapIndex = (seed + i * 7) % (i + 1);
+    [ordered[i], ordered[swapIndex]] = [ordered[swapIndex], ordered[i]];
+  }
+
+  return {
+    options: ordered.map((item) => item.option),
+    answer: ordered.findIndex((item) => item.option === correctAnswer)
+  };
+}
+
 function titleCase(value) {
   return value
     .split(/[-\s]+/)
@@ -195,23 +286,25 @@ function titleCase(value) {
 }
 
 function makeFallbackQuiz(documentText, numQuestions) {
-  const sentences = splitSentences(documentText);
-  const keywords = getKeywords(documentText);
-  const candidates = sentences
-    .map((sentence) => {
-      const matchedKeyword = keywords.find((keyword) =>
-        new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(
-          sentence
-        )
-      );
-      return { sentence, keyword: matchedKeyword };
-    })
-    .filter((item) => item.keyword);
+  const chunks = chunkText(documentText);
+  const keywords = getBestTerms(documentText);
+  const source = chunks
+    .map((chunk) => {
+      const sentences = splitSentences(chunk);
+      const bestSentence = sentences.length
+        ? sentences.sort((a, b) => scoreSentence(b, keywords) - scoreSentence(a, keywords))[0]
+        : chunk;
+      const chunkTerms = getBestTerms(chunk, 12);
+      const keyword = chunkTerms[0] || keywords[0] || "concept";
 
-  const source = candidates.length ? candidates : sentences.map((sentence) => ({
-    sentence,
-    keyword: keywords[0] || "concept"
-  }));
+      return {
+        chunk,
+        sentence: bestSentence,
+        keyword,
+        distractors: [...chunkTerms, ...keywords].filter((term) => term !== keyword)
+      };
+    })
+    .filter((item) => item.sentence && item.keyword);
 
   if (!source.length) {
     throw new Error("No readable study content could be turned into quiz questions.");
@@ -220,27 +313,27 @@ function makeFallbackQuiz(documentText, numQuestions) {
   return Array.from({ length: Math.min(numQuestions, source.length) }, (_unused, index) => {
     const item = source[index % source.length];
     const correct = titleCase(item.keyword);
-    const distractors = keywords
+    const distractors = item.distractors
       .filter((keyword) => keyword !== item.keyword)
-      .slice(index * 3, index * 3 + 12)
+      .slice(index * 2, index * 2 + 16)
       .map(titleCase);
-    const options = [correct, ...distractors].slice(0, 4);
+    const uniqueOptions = [...new Set([correct, ...distractors])].slice(0, 4);
 
-    while (options.length < 4) {
-      options.push(`Related Concept ${options.length}`);
+    while (uniqueOptions.length < 4) {
+      uniqueOptions.push(
+        ["Compensatory Response", "Membrane Permeability", "Physiologic Gradient", "Cellular Transport"][
+          uniqueOptions.length - 1
+        ]
+      );
     }
 
-    const answer = index % 4;
-    const shuffledOptions = [...options];
-    const correctOption = shuffledOptions[0];
-    shuffledOptions.splice(0, 1);
-    shuffledOptions.splice(answer, 0, correctOption);
+    const shuffled = shuffleWithAnswer(uniqueOptions, correct, index + 3);
 
     return {
-      q: `Based on the uploaded PDF, which concept is most directly supported by this statement?\n\n"${item.sentence}"`,
-      options: shuffledOptions,
-      answer,
-      explanation: `The PDF statement most directly supports ${correct}. Review this sentence in context and connect it with the surrounding topic. The other choices are terms found or inferred from the document, but they are less directly supported by this specific statement.`
+      q: `A student is reviewing the uploaded PDF and focuses on this passage:\n\n"${item.sentence}"\n\nWhich term best completes the main concept being tested in this passage?`,
+      options: shuffled.options,
+      answer: shuffled.answer,
+      explanation: `${correct} is the best-supported answer from this passage. In basic mode, the quiz uses extracted PDF text and nearby document terms to create review questions. For full USMLE-style reasoning questions with stronger distractors and deeper explanations, add a valid Gemini API key in Render.`
     };
   });
 }
