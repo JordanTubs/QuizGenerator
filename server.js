@@ -92,34 +92,73 @@ function validateQuizPayload(payload) {
     }
 
     return {
-      q: item.q.trim(),
-      options: options.map((option) => option.trim()),
+      q: item.q.trim().slice(0, 900),
+      options: options.map((option) => option.trim().slice(0, 180)),
       answer,
-      explanation: item.explanation.trim()
+      explanation: item.explanation.trim().slice(0, 1600)
     };
   });
 }
+
+const quizResponseSchema = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      q: {
+        type: "string",
+        description:
+          "A short, clear USMLE-style question stem based on the uploaded PDF. Prefer 2-5 sentences."
+      },
+      options: {
+        type: "array",
+        minItems: 4,
+        maxItems: 4,
+        items: {
+          type: "string",
+          description:
+            "A concise answer choice. All four choices must be parallel in category, grammar, and length."
+        }
+      },
+      answer: {
+        type: "integer",
+        description: "The zero-based index of the correct answer."
+      },
+      explanation: {
+        type: "string",
+        description:
+          "A concise teaching explanation that cites the PDF idea and explains why the distractors are wrong."
+      }
+    },
+    required: ["q", "options", "answer", "explanation"]
+  }
+};
 
 function buildPrompt(documentText, numQuestions) {
   return `
 You are an expert NBME/USMLE Step 1 question writer and medical educator.
 
-Read the uploaded source material carefully, identify its high-yield mechanisms and relationships, then generate exactly ${numQuestions} multiple-choice questions based only on that source material.
+Read the uploaded source material carefully. Use the PDF as the source for what each question asks. You may use standard medical knowledge and web grounding only to make the wording, mechanism, and distractors medically coherent.
+
+Generate exactly ${numQuestions} multiple-choice questions.
 
 Requirements:
-- Questions must feel like real USMLE Step 1/NBME items, not flashcards.
-- Use clinical vignettes, experimental setups, lab findings, physiologic changes, pathology descriptions, or mechanism-based prompts when supported by the PDF.
-- Test understanding and application: cause/effect, mechanism, next physiologic change, expected lab finding, pathway consequence, lesion localization, drug effect, or disease mechanism.
+- Keep each displayed question short and easy to read, usually 2-5 sentences.
+- Questions must feel like clean USMLE Step 1/NBME-style review items, not copied textbook sentences and not flashcards.
+- Base the tested concept on a specific idea from the PDF. Do not ask about a topic absent from the PDF.
+- Use clinical vignettes, short experimental setups, lab findings, physiologic changes, pathology descriptions, or mechanism prompts only when they fit the PDF content.
+- Test understanding and application: cause/effect, mechanism, expected change, lab finding, pathway consequence, lesion localization, drug effect, or disease mechanism.
+- The actual question should be clear, direct, and make sense even if the PDF sentence was messy.
 - Do not ask questions that can be answered by matching one obvious keyword from the prompt to the answer choice.
 - Do not copy one sentence and ask "which concept is supported"; transform the PDF content into a reasoning question.
 - Do not make the correct answer longer, more specific, or more detailed than the distractors.
-- Distractors must be medically plausible and drawn from nearby or related concepts in the PDF whenever possible.
-- All four answer choices should be parallel in grammar, length, and category.
+- Distractors must be medically plausible. Use related PDF concepts first; use standard medical knowledge only to make plausible same-category distractors.
+- All four answer choices must be parallel in grammar, length, and category. For example, all mechanisms, all diagnoses, all lab findings, or all physiologic effects.
 - Avoid giveaway words such as "always", "never", "only", "all of the above", and "none of the above".
 - Avoid answer choices that are obviously unrelated to the vignette.
 - Each question must have exactly 4 answer choices.
 - The "answer" value must be the zero-based index of the correct option.
-- Explanations must teach the underlying mechanism and clearly explain why the correct option is right and why each distractor is wrong.
+- Explanations must be concise, teach the underlying mechanism, mention the PDF idea being tested, and explain why each distractor is wrong.
 - If the PDF is about non-medical material, still write review-style application questions from the PDF, but do not invent facts outside the source.
 - Do not include markdown, commentary, code fences, or any keys other than q, options, answer, and explanation.
 - Return strict JSON only, matching this exact shape:
@@ -282,9 +321,48 @@ function titleCase(value) {
     .join(" ");
 }
 
+function cleanSentence(sentence, maxLength = 260) {
+  const cleaned = sentence
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+
+  const shortened = cleaned.slice(0, maxLength);
+  return `${shortened.slice(0, shortened.lastIndexOf(" "))}...`;
+}
+
+function buildSentenceOptions(item, allSentences, index) {
+  const correct = cleanSentence(item.sentence, 170);
+  const distractors = allSentences
+    .filter((sentence) => sentence !== item.sentence)
+    .filter((sentence) => {
+      const words = sentence.toLowerCase().match(/\b[a-z][a-z-]{4,}\b/g) || [];
+      return words.some((word) => item.distractors.includes(word));
+    })
+    .map((sentence) => cleanSentence(sentence, 170))
+    .filter((sentence) => sentence && sentence !== correct);
+
+  const backupDistractors = [
+    "The opposite physiologic response would be expected under these conditions.",
+    "The finding is unrelated to the mechanism emphasized in the passage.",
+    "The passage supports a different mechanism than this answer choice describes.",
+    "This option changes the cause-and-effect relationship described in the PDF."
+  ];
+
+  const uniqueOptions = [...new Set([correct, ...distractors, ...backupDistractors])].slice(0, 4);
+  return shuffleWithAnswer(uniqueOptions, correct, index + 13);
+}
+
 function makeFallbackQuiz(documentText, numQuestions) {
   const chunks = chunkText(documentText);
   const keywords = getBestTerms(documentText);
+  const allSentences = splitSentences(documentText)
+    .sort((a, b) => scoreSentence(b, keywords) - scoreSentence(a, keywords))
+    .slice(0, 120);
   const source = chunks
     .map((chunk) => {
       const sentences = splitSentences(chunk);
@@ -309,30 +387,44 @@ function makeFallbackQuiz(documentText, numQuestions) {
 
   return Array.from({ length: Math.min(numQuestions, source.length) }, (_unused, index) => {
     const item = source[index % source.length];
-    const correct = titleCase(item.keyword);
-    const distractors = item.distractors
-      .filter((keyword) => keyword !== item.keyword)
-      .slice(index * 2, index * 2 + 16)
-      .map(titleCase);
-    const uniqueOptions = [...new Set([correct, ...distractors])].slice(0, 4);
-
-    while (uniqueOptions.length < 4) {
-      uniqueOptions.push(
-        ["Compensatory Response", "Membrane Permeability", "Physiologic Gradient", "Cellular Transport"][
-          uniqueOptions.length - 1
-        ]
-      );
-    }
-
-    const shuffled = shuffleWithAnswer(uniqueOptions, correct, index + 3);
+    const shuffled = buildSentenceOptions(item, allSentences, index);
+    const focus = titleCase(item.keyword);
 
     return {
-      q: `A student is reviewing the uploaded PDF and focuses on this passage:\n\n"${item.sentence}"\n\nWhich term best completes the main concept being tested in this passage?`,
+      q: `The uploaded PDF emphasizes ${focus.toLowerCase()} in the following context:\n\n"${cleanSentence(
+        item.chunk,
+        420
+      )}"\n\nWhich statement is best supported by this part of the PDF?`,
       options: shuffled.options,
       answer: shuffled.answer,
-      explanation: `${correct} is the best-supported answer from this passage. In basic mode, the quiz uses extracted PDF text and nearby document terms to create review questions. For full USMLE-style reasoning questions with stronger distractors and deeper explanations, add a valid Gemini API key in Render.`
+      explanation: `The correct answer is the statement most directly supported by this PDF passage. The other choices use nearby PDF language but do not match the specific cause, mechanism, or relationship emphasized here. For shorter USMLE-style clinical reasoning questions with stronger distractors, add a valid Gemini API key in Render.`
     };
   });
+}
+
+async function generateWithGemini(ai, prompt) {
+  const baseRequest = {
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: quizResponseSchema,
+      temperature: 0.25
+    }
+  };
+
+  try {
+    return await ai.models.generateContent({
+      ...baseRequest,
+      config: {
+        ...baseRequest.config,
+        tools: [{ googleSearch: {} }]
+      }
+    });
+  } catch (groundingError) {
+    console.warn("Grounded generation failed; retrying without Google Search.", groundingError);
+    return ai.models.generateContent(baseRequest);
+  }
 }
 
 app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
@@ -362,15 +454,7 @@ app.post("/api/generate-quiz", upload.single("pdf"), async (req, res) => {
 
     const prompt = buildPrompt(documentText.slice(0, 120000), numQuestions);
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.4
-      }
-    });
+    const response = await generateWithGemini(ai, prompt);
 
     const questions = validateQuizPayload(extractJsonArray(response.text));
 
